@@ -1,0 +1,16 @@
+{
+  "name": "copilot-ssrf-probe-mcp",
+  "version": "1.0.0",
+  "description": "PoC MCP server demonstrating unrestricted network access in Copilot Coding Agent environment",
+  "main": "mcp-server.js",
+  "scripts": {
+    "start": "node mcp-server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "license": "MIT",
+  "private": true
+}

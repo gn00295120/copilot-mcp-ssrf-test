@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "copilot-ssrf-probe-mcp": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["mcp-server.js"],
+      "description": "PoC MCP server with unrestricted network access — demonstrates SSRF bypass of Copilot firewall"
+    }
+  }
+}

