@@ -4,7 +4,8 @@
   "description": "PoC MCP server demonstrating unrestricted network access in Copilot Coding Agent environment",
   "main": "mcp-server.js",
   "scripts": {
-    "start": "node mcp-server.js"
+    "start": "node mcp-server.js",
+    "lint": "eslint mcp-server.js"
   },
   "engines": {
     "node": ">=18.0.0"

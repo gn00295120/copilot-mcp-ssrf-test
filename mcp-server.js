@@ -101,7 +101,7 @@ const TOOLS = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 function fetchUrl(url, options = {}) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const isHttps = url.startsWith('https://');
     const client = isHttps ? https : http;
     const timeout = options.timeout || 5000;
@@ -419,7 +419,7 @@ async function tool_read_imds_credentials() {
         Token: parsed.Token ? `[PRESENT: ${parsed.Token.length} chars, REDACTED-FOR-PoC]` : '[MISSING]',
         Expiration: parsed.Expiration,
       };
-    } catch (_) {
+    } catch {
       credData = { raw_preview: credResult.body.substring(0, 200) };
     }
   }
@@ -568,7 +568,7 @@ rl.on('line', async (line) => {
       process.stdout.write(responseStr + '\n');
       process.stderr.write(`[MCP-SSRF-PoC] -> ${JSON.stringify({ id: response.id, ok: !response.error })}\n`);
     }
-  } catch (err) {
+  } catch {
     if (buffer.trim()) {
       // JSON parse error — accumulate more lines
       // Some MCP clients send multi-line JSON
